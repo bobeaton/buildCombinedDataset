@@ -1,0 +1,16 @@
+{
+  "permissions": {
+    "allow": [
+      "WebSearch",
+      "Bash(./.venv/Scripts/python.exe -c ' *)",
+      "WebFetch(domain:huggingface.co)",
+      "Bash(./.venv/Scripts/python.exe src/train.py --max-steps 10)",
+      "Bash(./.venv/Scripts/python.exe src/train.py --max-steps 30)",
+      "Bash(./.venv/Scripts/python.exe src/train.py --max-steps 1010 --resume checkpoints/speecht5_kangri/checkpoint-1000)",
+      "Bash(./.venv/Scripts/python.exe src/infer.py --list-speakers)",
+      "Bash(./.venv/Scripts/python.exe src/infer.py --list-characters)",
+      "Bash(./.venv/Scripts/python.exe src/infer.py --character \"Jesus\")",
+      "Bash(./.venv/Scripts/python.exe src/infer.py --compare 3 --character \"Jesus\")"
+    ]
+  }
+}

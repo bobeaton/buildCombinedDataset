@@ -1,0 +1,14 @@
+.venv/
+checkpoints/
+data/
+model_cache/
+model_init/model.safetensors
+outputs/
+src/__pycache__/
+*.pyc
+data/audio/*
+!data/audio/.gitkeep
+*.wav
+*.pt
+*.ckpt
+.ipynb_checkpoints/

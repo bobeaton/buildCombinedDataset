@@ -1,0 +1,60 @@
+# Characters ranked by likely voice quality (descending training-audio minutes).
+# Ranking proxy: total duration in the training split -- the actual data the
+# model's fine-tuning gradient updates came from. More minutes generally means
+# a better-learned, more reliable voice; characters near the bottom were seen
+# rarely (or never) during training and may sound unstable or defer to the
+# dominant voice.
+#
+rank  character                    train_min  train_utts  val_utts
+   1  Jesus                           1110.5        9612       516
+   2  Paul                             455.4        1754        87
+   3  Luke                             187.4        1108        60
+   4  John                             153.6         888        35
+   5  Narr: Vinay                       82.8         310        23
+   6  Peter                             70.0         321        17
+   7  Matthew                           67.8         488        21
+   8  Mark                              62.1         404        24
+   9  Religious Leader                  19.6         145         4
+  10  Jesus-FX1                         15.8          58         2
+  11  Man                               15.4         141         6
+  12  Stephen                           12.3          42         1
+  13  God                               12.2          80         4
+  14  Scripture Quote-FX1                8.6          48         2
+  15  Angel_01-FX1                       7.2          31         2
+  16  John the Baptist                   7.1          32         2
+  17  Angel_02-FX1                       7.0          25         0
+  18  Narr: Jude                         5.9          23         5
+  19  Disciple                           4.9          44         3
+  20  James                              4.7          15         0
+  21  Isaiah-FX1                         4.0          20         2
+  22  Festus                             3.3          15         1
+  23  male_group3                        3.2          18         0
+  24  male_group7                        3.1          20         0
+  25  male_group9                        3.1          18         1
+  26  male_group8                        3.0          19         0
+  27  male_group12                       2.9          19         1
+  28  male_group11                       2.9          18         0
+  29  male_group2                        2.9          18         2
+  30  Elder-FX1                          2.8          11         1
+  31  Man (Not Good)                     2.7          25         1
+  32  Pilate-FX2                         2.7          22         2
+  33  male_group1                        2.6          15         1
+  34  Voice_02-FX1                       2.6          11         1
+  35  High Priest                        2.5          17         1
+  36  male_group10                       2.4          16         0
+  37  Father                             2.4          10         1
+  38  Woman-Sunita                       2.3          20         1
+  39  male_group5                        2.3          17         2
+  40  male_group6                        2.3          16         3
+  41  Commander                          2.3          14         0
+  42  Holy Spirit                        2.2          11         0
+  43  male_group4                        2.1          15         3
+  44  Officer                            2.1          12         0
+  45  Mary                               2.0          15         1
+  46  female_group1                      1.5          13         4
+  47  Man (Blind) Healed                 1.5          12         0
+  48  Man (Legion) Possessed-FX3         1.4           8         2
+  49  Man (pleading)                     1.3          10         0
+  50  Pilate                             1.2          12         0
+  51  Soldier                            0.7          12         0
+  52  male_group13                       0.7           5         0

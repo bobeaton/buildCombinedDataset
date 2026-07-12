@@ -1,0 +1,13 @@
+--extra-index-url https://download.pytorch.org/whl/cu130
+
+torch
+torchaudio
+transformers>=4.41
+datasets
+accelerate
+soundfile
+speechbrain==1.0.3  # 1.1.0 added a lazy k2_fsa import in Xvector that crashes on Windows without the k2 package
+sentencepiece
+librosa
+evaluate
+tensorboard
