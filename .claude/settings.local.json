@@ -10,7 +10,8 @@
       "Bash(./.venv/Scripts/python.exe src/infer.py --list-speakers)",
       "Bash(./.venv/Scripts/python.exe src/infer.py --list-characters)",
       "Bash(./.venv/Scripts/python.exe src/infer.py --character \"Jesus\")",
-      "Bash(./.venv/Scripts/python.exe src/infer.py --compare 3 --character \"Jesus\")"
+      "Bash(./.venv/Scripts/python.exe src/infer.py --compare 3 --character \"Jesus\")",
+      "Bash(./.venv/Scripts/python.exe src/build_tokenizer.py --variant b)"
     ]
   }
 }

@@ -83,7 +83,7 @@ requirements.txt
 .\.venv\Scripts\python.exe src\infer.py --list-characters
 
 # synthesize custom text as a given character
-.\.venv\Scripts\python.exe src\infer.py --text "आपका पाठ यहाँ" --character "Jesus"
+.\.venv\Scripts\python.exe src\infer.py --text "“ध़रत्तिआ पर तह़रा-तह़रा देआं बीआं बाल़िआं सब्‍जिआं कने हरे-भ़रे बूट्टे, कने बीआं बाल़े फल़दार रुक्‍ख भ़ी अपणिआं-अपणिआं किस्‍मा दे मताबक लगी जाह़ण।”" --character "God"
 
 # A/B test: synthesize N held-out validation lines + copy the real recording alongside, so you can compare directly
 .\.venv\Scripts\python.exe src\infer.py --compare 5 --character "Jesus"

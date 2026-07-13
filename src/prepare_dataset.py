@@ -67,10 +67,8 @@ from load_metadata import parse_metadata
 ROOT = Path(__file__).parent.parent
 METADATA_CSV = r"C:\Users\pete_\Dropbox\NTprogress\PahariAudio\KangriWordDownloads\FCBH\combined_metadata.csv"
 WAV_DIR = Path(r"C:\Users\pete_\Dropbox\NTprogress\PahariAudio\KangriWordDownloads\FCBH\wavs")
-TOKENIZER_DIR = ROOT / "tokenizer" / "speecht5_tokenizer"
-OUT_DIR = ROOT / "data" / "prepared_dataset"
 
-MAX_TEXT_CHARS = 400   # drops a handful of outlier verse-group clips (p99.5 ~= 343)
+MAX_TEXT_CHARS = 400   # drops a handful of outlier verse-group clips (p99.5 ~= 343 for transcriptionA, ~= 323 for transcriptionB)
 MAX_DURATION_S = 25.0
 VAL_FRACTION = 0.05
 SEED = 42
@@ -97,11 +95,14 @@ def load_audio_16k(path: str) -> np.ndarray:
     return waveform
 
 
-def build_raw_dataset() -> Dataset:
+def build_raw_dataset(variant: str) -> Dataset:
     rows = parse_metadata(METADATA_CSV)
     data = {
         "audio_path": [str(WAV_DIR / r.audio_file) for r in rows],
-        "text": [unicodedata.normalize("NFC", r.transcription_a) for r in rows],
+        "text": [
+            unicodedata.normalize("NFC", r.transcription_a if variant == "a" else r.transcription_b)
+            for r in rows
+        ],
         "speaker": [r.speaker.strip() for r in rows],
         "character": [r.character.strip() for r in rows],
         "audio_file": [r.audio_file for r in rows],
@@ -110,14 +111,25 @@ def build_raw_dataset() -> Dataset:
 
 
 def main():
+    import argparse
+
     from transformers import SpeechT5Processor, SpeechT5FeatureExtractor, SpeechT5Tokenizer
     from speechbrain.inference.speaker import EncoderClassifier
     from speechbrain.utils.fetching import LocalStrategy
 
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--variant", choices=["a", "b"], default="a", help="which transcription column to build the dataset from")
+    parser.add_argument("--limit", type=int, default=None, help="use only the first N rows (smoke test)")
+    args = parser.parse_args()
+
+    suffix = "" if args.variant == "a" else "_b"
+    tokenizer_dir = ROOT / f"tokenizer{suffix}" / "speecht5_tokenizer"
+    out_dir = ROOT / "data" / f"prepared_dataset{suffix}"
+
     device = "cuda" if torch.cuda.is_available() else "cpu"
     print(f"using device: {device}")
 
-    tokenizer = SpeechT5Tokenizer.from_pretrained(str(TOKENIZER_DIR))
+    tokenizer = SpeechT5Tokenizer.from_pretrained(str(tokenizer_dir))
     feature_extractor = SpeechT5FeatureExtractor.from_pretrained("microsoft/speecht5_tts")
     processor = SpeechT5Processor(feature_extractor=feature_extractor, tokenizer=tokenizer)
 
@@ -148,12 +160,11 @@ def main():
         out["duration"] = len(waveform) / TARGET_SR
         return out
 
-    print("building raw dataset (metadata + audio decode/resample plan)...")
-    ds = build_raw_dataset()
-    if len(sys.argv) > 1 and sys.argv[1] == "--limit":
-        n = int(sys.argv[2])
-        ds = ds.select(range(n))
-        print(f"--limit: using first {n} rows only (smoke test)")
+    print(f"building raw dataset (metadata + audio decode/resample plan, variant={args.variant})...")
+    ds = build_raw_dataset(args.variant)
+    if args.limit:
+        ds = ds.select(range(args.limit))
+        print(f"--limit: using first {args.limit} rows only (smoke test)")
     print(f"raw dataset: {len(ds)} rows")
 
     print("extracting features (log-mel targets, tokenized text, speaker x-vectors)...")
@@ -178,9 +189,9 @@ def main():
     ds = ds.train_test_split(test_size=VAL_FRACTION, seed=SEED)
     print(f"train: {len(ds['train'])}, val: {len(ds['test'])}")
 
-    OUT_DIR.mkdir(parents=True, exist_ok=True)
-    ds.save_to_disk(str(OUT_DIR))
-    print(f"saved prepared dataset -> {OUT_DIR}")
+    out_dir.mkdir(parents=True, exist_ok=True)
+    ds.save_to_disk(str(out_dir))
+    print(f"saved prepared dataset -> {out_dir}")
 
 
 if __name__ == "__main__":

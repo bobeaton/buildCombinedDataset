@@ -19,10 +19,16 @@ from transformers import (
 )
 
 ROOT = Path(__file__).parent.parent
-MODEL_INIT_DIR = ROOT / "model_init"
-TOKENIZER_DIR = ROOT / "tokenizer" / "speecht5_tokenizer"
-DATASET_DIR = ROOT / "data" / "prepared_dataset"
-OUTPUT_DIR = ROOT / "checkpoints" / "speecht5_kangri"
+
+
+def variant_paths(variant: str):
+    suffix = "" if variant == "a" else "_b"
+    return {
+        "model_init_dir": ROOT / f"model_init{suffix}",
+        "tokenizer_dir": ROOT / f"tokenizer{suffix}" / "speecht5_tokenizer",
+        "dataset_dir": ROOT / "data" / f"prepared_dataset{suffix}",
+        "output_dir": ROOT / "checkpoints" / f"speecht5_kangri{suffix}",
+    }
 
 
 @dataclass
@@ -55,12 +61,12 @@ class TTSDataCollatorWithPadding:
         return batch
 
 
-def build_trainer(max_steps: int, output_dir: Path):
-    tokenizer = SpeechT5Tokenizer.from_pretrained(str(TOKENIZER_DIR))
+def build_trainer(max_steps: int, output_dir: Path, tokenizer_dir: Path, model_init_dir: Path, dataset_dir: Path):
+    tokenizer = SpeechT5Tokenizer.from_pretrained(str(tokenizer_dir))
     feature_extractor = SpeechT5FeatureExtractor.from_pretrained("microsoft/speecht5_tts")
     processor = SpeechT5Processor(feature_extractor=feature_extractor, tokenizer=tokenizer)
 
-    model = SpeechT5ForTextToSpeech.from_pretrained(str(MODEL_INIT_DIR))
+    model = SpeechT5ForTextToSpeech.from_pretrained(str(model_init_dir))
     model.config.use_cache = False  # incompatible with gradient checkpointing
 
     # SpeechT5's decoder LayerDrop (config default 0.1) independently skips each of the
@@ -74,7 +80,7 @@ def build_trainer(max_steps: int, output_dir: Path):
         if hasattr(module, "layerdrop"):
             module.layerdrop = 0.0  # type: ignore[assignment]
 
-    dataset = load_from_disk(str(DATASET_DIR))
+    dataset = load_from_disk(str(dataset_dir))
 
     data_collator = TTSDataCollatorWithPadding(
         processor=processor, reduction_factor=model.config.reduction_factor
@@ -118,6 +124,7 @@ def build_trainer(max_steps: int, output_dir: Path):
 def main():
     import sys
 
+    variant = "a"
     max_steps = 6000
     resume_from = None
     args = sys.argv[1:]
@@ -127,16 +134,27 @@ def main():
             args = args[2:]
         elif args[0] == "--resume":
             # pass a checkpoint dir, or "auto" to resume from the latest checkpoint
-            # under OUTPUT_DIR
+            # under the output dir
             resume_from = args[1]
+            args = args[2:]
+        elif args[0] == "--variant":
+            variant = args[1]
+            assert variant in ("a", "b")
             args = args[2:]
         else:
             raise ValueError(f"unrecognized argument: {args[0]}")
 
-    trainer, processor = build_trainer(max_steps=max_steps, output_dir=OUTPUT_DIR)
+    paths = variant_paths(variant)
+    trainer, processor = build_trainer(
+        max_steps=max_steps,
+        output_dir=paths["output_dir"],
+        tokenizer_dir=paths["tokenizer_dir"],
+        model_init_dir=paths["model_init_dir"],
+        dataset_dir=paths["dataset_dir"],
+    )
     trainer.train(resume_from_checkpoint=(True if resume_from == "auto" else resume_from))
 
-    final_dir = OUTPUT_DIR / "final"
+    final_dir = paths["output_dir"] / "final"
     trainer.save_model(str(final_dir))
     processor.save_pretrained(str(final_dir))
     print(f"saved final model -> {final_dir}")

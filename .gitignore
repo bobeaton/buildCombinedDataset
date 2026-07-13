@@ -2,7 +2,8 @@
 checkpoints/
 data/
 model_cache/
-model_init/model.safetensors
+model_init*/model.safetensors
+tokenizer*/corpus.txt
 outputs/
 src/__pycache__/
 *.pyc
