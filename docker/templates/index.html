@@ -43,11 +43,14 @@
     </div>
 
     <h2>API Endpoints</h2>
+    <p>Full reference: <a href="/docs">Swagger UI</a> / <a href="/openapi.yaml">openapi.yaml</a></p>
     <ul id="endpoints">
         <li>GET /api/v1/tts/health/</li>
         <li>GET /api/v1/tts/characters/?variant=a|b</li>
         <li>POST /api/v1/tts/synthesize/ &mdash; JSON {text, character, variant, compare, seed} &rarr; wav or zip</li>
-        <li>POST /api/v1/tts/synthesize-file/ &mdash; multipart 'file' or JSON {text, variant} &rarr; wav</li>
+        <li>POST /api/v1/tts/synthesize-file/ &mdash; multipart 'file' or JSON {text, variant} &rarr; 202 + jobId (async, see below)</li>
+        <li>GET /api/v1/tts/jobs/&lt;jobId&gt;/ &mdash; poll a synthesize-file job's status</li>
+        <li>GET /api/v1/tts/jobs/&lt;jobId&gt;/download/ &mdash; download a finished job's wav</li>
     </ul>
 
     <script>
