@@ -11,14 +11,23 @@ Endpoints:
   GET  /api/v1/tts/characters/        list characters + quality ranking (?variant=a|b)
   POST /api/v1/tts/synthesize/        synthesize text with one character, all characters,
                                        or N validation examples compared against real audio
-  POST /api/v1/tts/synthesize-file/   synthesize an entire spkrEmb-marked-up file
+  POST /api/v1/tts/synthesize-file/   start an async job to synthesize an entire
+                                       spkrEmb-marked-up file (a whole file can take
+                                       minutes -- too long for most HTTP clients to hold
+                                       a connection open, so this returns a job id
+                                       immediately rather than the audio itself)
+  GET  /api/v1/tts/jobs/<id>/         poll a synthesize-file job's status
+  GET  /api/v1/tts/jobs/<id>/download/  download a finished job's wav
 """
 
 import io
 import json
 import sys
 import tempfile
+import threading
+import time
 import unicodedata
+import uuid
 import zipfile
 from pathlib import Path
 
@@ -72,6 +81,47 @@ def openapi_spec():
 
 
 _bundles = {}  # variant -> dict(processor, model, vocoder, dataset, character_embeddings)
+
+# synthesize-file jobs: job_id -> dict(status, created_at, error, audio_bytes, filename,
+# synth_count). A whole file can take several minutes, too long for most HTTP clients to
+# hold a connection open for, so it runs in a background thread; the client polls
+# GET /api/v1/tts/jobs/<id>/ and downloads from .../download/ once status is "done".
+# In-memory only (lost on restart) and kept indefinitely once finished -- fine at this
+# project's single-user, single-machine scale; a longer-lived deployment would want a
+# real job queue and TTL-based eviction instead.
+_jobs = {}
+_jobs_lock = threading.Lock()
+
+
+def _run_synthesize_file_job(job_id: str, input_path: Path, variant: str, mapping_path: Path):
+    with _jobs_lock:
+        _jobs[job_id]["status"] = "running"
+    try:
+        bundle = get_bundle(variant)
+        character_mapping = load_character_mapping(mapping_path)
+        full_audio, synth_count = synthesize_file(
+            input_path,
+            character_mapping,
+            bundle["character_embeddings"],
+            bundle["model"],
+            bundle["processor"],
+            bundle["vocoder"],
+            bundle["device"],
+        )
+        audio_bytes = _wav_bytes(full_audio)
+        with _jobs_lock:
+            _jobs[job_id].update(status="done", audio_bytes=audio_bytes, synth_count=synth_count)
+        print(f"[job {job_id}] synthesized {synth_count} lines from {input_path.name}")
+    except Exception as e:
+        with _jobs_lock:
+            _jobs[job_id].update(status="error", error=str(e))
+        print(f"[job {job_id}] failed: {e}")
+    finally:
+        try:
+            input_path.unlink(missing_ok=True)
+            input_path.parent.rmdir()
+        except OSError:
+            pass
 
 
 def _check_auth():
@@ -253,41 +303,70 @@ def synthesize_file_endpoint():
 
     variant = request.form.get("variant") or request.args.get("variant", DEFAULT_VARIANT)
 
-    with tempfile.TemporaryDirectory() as tmpdir:
-        if "file" in request.files:
-            input_path = Path(tmpdir) / (request.files["file"].filename or "input.txt")
-            request.files["file"].save(str(input_path))
-        else:
-            data = request.get_json(silent=True) or {}
-            if not data.get("text"):
-                return jsonify({"error": "provide either a multipart 'file' upload or JSON {'text': ...}"}), 400
-            variant = data.get("variant", variant)
-            input_path = Path(tmpdir) / "input.txt"
-            input_path.write_text(data["text"], encoding="utf-8")
+    # The uploaded content is copied into a job-owned temp dir that outlives this request
+    # (unlike tempfile.TemporaryDirectory()'s context manager) -- the background worker
+    # thread that actually processes it is responsible for cleaning it up when done.
+    tmpdir = Path(tempfile.mkdtemp(prefix="tts_job_"))
+    if "file" in request.files:
+        stem = Path(request.files["file"].filename or "input").stem
+        input_path = tmpdir / (request.files["file"].filename or "input.txt")
+        request.files["file"].save(str(input_path))
+    else:
+        data = request.get_json(silent=True) or {}
+        if not data.get("text"):
+            tmpdir.rmdir()
+            return jsonify({"error": "provide either a multipart 'file' upload or JSON {'text': ...}"}), 400
+        variant = data.get("variant", variant)
+        stem = "input"
+        input_path = tmpdir / "input.txt"
+        input_path.write_text(data["text"], encoding="utf-8")
 
-        try:
-            bundle = get_bundle(variant)
-        except (ValueError, FileNotFoundError) as e:
-            return jsonify({"error": str(e)}), 400
+    if variant not in ("a", "b"):
+        input_path.unlink(missing_ok=True)
+        tmpdir.rmdir()
+        return jsonify({"error": f"invalid variant {variant!r}, must be 'a' or 'b'"}), 400
 
-        character_mapping = load_character_mapping(mapping_path)
+    job_id = str(uuid.uuid4())
+    with _jobs_lock:
+        _jobs[job_id] = {"status": "pending", "created_at": time.time(), "filename": f"{stem}.wav"}
+    threading.Thread(
+        target=_run_synthesize_file_job, args=(job_id, input_path, variant, mapping_path), daemon=True
+    ).start()
 
-        try:
-            full_audio, synth_count = synthesize_file(
-                input_path,
-                character_mapping,
-                bundle["character_embeddings"],
-                bundle["model"],
-                bundle["processor"],
-                bundle["vocoder"],
-                bundle["device"],
-            )
-        except ValueError as e:
-            return jsonify({"error": str(e)}), 400
+    return jsonify({"jobId": job_id, "status": "pending", "statusUrl": f"/api/v1/tts/jobs/{job_id}/"}), 202
 
-    buf = io.BytesIO(_wav_bytes(full_audio))
-    print(f"synthesized {synth_count} lines from {input_path.name}")
-    return send_file(buf, mimetype="audio/wav", as_attachment=True, download_name=f"{input_path.stem}.wav")
+
+@app.route("/api/v1/tts/jobs/<job_id>/", methods=["GET"])
+def job_status_endpoint(job_id):
+    if not _check_auth():
+        return _unauthorized()
+    with _jobs_lock:
+        job = _jobs.get(job_id)
+    if job is None:
+        return jsonify({"error": f"unknown job id {job_id!r}"}), 404
+
+    response = {"jobId": job_id, "status": job["status"]}
+    if job["status"] == "error":
+        response["error"] = job["error"]
+    elif job["status"] == "done":
+        response["synthCount"] = job["synth_count"]
+        response["downloadUrl"] = f"/api/v1/tts/jobs/{job_id}/download/"
+    return jsonify(response)
+
+
+@app.route("/api/v1/tts/jobs/<job_id>/download/", methods=["GET"])
+def job_download_endpoint(job_id):
+    if not _check_auth():
+        return _unauthorized()
+    with _jobs_lock:
+        job = _jobs.get(job_id)
+    if job is None:
+        return jsonify({"error": f"unknown job id {job_id!r}"}), 404
+    if job["status"] != "done":
+        return jsonify({"error": f"job {job_id!r} is not ready yet (status: {job['status']!r})"}), 409
+
+    buf = io.BytesIO(job["audio_bytes"])
+    return send_file(buf, mimetype="audio/wav", as_attachment=True, download_name=job["filename"])
 
 
 if __name__ == "__main__":

@@ -83,11 +83,27 @@ examples for that character synthesized and zipped alongside their real recordin
 mounted.
 
 ### POST /api/v1/tts/synthesize-file/
-Either multipart form-data with a `file` field (a spkrEmb-marked-up text file, see
-`../src/infer_file.py`'s docstring for the format), or JSON `{"text": "<file content>"}`.
-Optional form/JSON field `variant`. Returns `audio/wav` directly -- the whole file
-concatenated into one clip, same as `infer_file.py`. Requires `-CharacterMappingDir` to
-have been mounted.
+Async -- a whole file can take several minutes, too long for most HTTP clients to hold a
+connection open for. Either multipart form-data with a `file` field (a spkrEmb-marked-up
+text file, see `../src/infer_file.py`'s docstring for the format), or JSON
+`{"text": "<file content>"}`. Optional form/JSON field `variant`. Requires
+`-CharacterMappingDir` to have been mounted.
+
+Returns immediately with **202 Accepted** and `{"jobId": "...", "status": "pending", "statusUrl": "..."}`.
+The job runs in a background thread; poll:
+
+### GET /api/v1/tts/jobs/&lt;jobId&gt;/
+```json
+{"jobId": "...", "status": "running"}
+```
+`status` is one of `pending`, `running`, `done`, `error` (with an `error` message field),
+or `done` (with `synthCount` and a `downloadUrl` field). A reasonable poll interval is
+~30s -- there's no push/webhook notification, only polling.
+
+### GET /api/v1/tts/jobs/&lt;jobId&gt;/download/
+Returns `audio/wav` once the job's `status` is `done`. `409` if it's not ready yet, `404`
+if the job id is unknown (including after a server restart -- jobs are in-memory only,
+not persisted).
 
 ## OpenAPI / Swagger
 
@@ -111,11 +127,16 @@ strongly-typed client for .NET Framework 4.8 (it generates `HttpClient`-based co
    a `FileResponse` (wraps a `Stream` + headers + status code, and is `IDisposable`) --
    not a POCO. That's expected; write the `Stream` to disk or hand it to whatever plays/
    saves the audio on the .NET side.
-4. **Auth**: if the server was started with `-ApiKey`, add an
+4. **Polling for synthesize-file**: that endpoint is async (see above) -- call
+   `SynthesizeFileAsync(...)`, take the returned `jobId`, then call
+   `GetJobStatusAsync(jobId)` in a loop (e.g. every 30s via `System.Threading.Timer` or a
+   simple `Task.Delay` loop) until `status` is `"done"` or `"error"`, then call
+   `DownloadJobResultAsync(jobId)` to get the `FileResponse`.
+5. **Auth**: if the server was started with `-ApiKey`, add an
    `Authorization: <key>` header to the generated client's `HttpClient` (NSwag-generated
    clients expose a constructor overload or partial method for this, depending on
    generation settings) -- it's checked for an exact string match, not a `Bearer` scheme.
-5. Since this is a native `HttpClient` call (not a browser), CORS doesn't apply.
+6. Since this is a native `HttpClient` call (not a browser), CORS doesn't apply.
 
 ## Configuration
 

@@ -41,6 +41,38 @@ components:
         valUtterances:
           type: integer
       required: [rank, character, trainMinutes, trainUtterances, valUtterances]
+    JobAccepted:
+      type: object
+      properties:
+        jobId:
+          type: string
+          format: uuid
+        status:
+          type: string
+          enum: [pending]
+        statusUrl:
+          type: string
+          description: Relative URL to poll -- GET this to check progress.
+      required: [jobId, status, statusUrl]
+    JobStatus:
+      type: object
+      properties:
+        jobId:
+          type: string
+          format: uuid
+        status:
+          type: string
+          enum: [pending, running, done, error]
+        error:
+          type: string
+          description: Present only when status is "error".
+        synthCount:
+          type: integer
+          description: Present only when status is "done" -- number of lines synthesized.
+        downloadUrl:
+          type: string
+          description: Present only when status is "done".
+      required: [jobId, status]
 
 paths:
   /api/v1/tts/health/:
@@ -187,7 +219,12 @@ paths:
   /api/v1/tts/synthesize-file/:
     post:
       operationId: synthesizeFile
-      summary: Synthesize an entire spkrEmb-marked-up text file into one concatenated wav
+      summary: >
+        Start an async job to synthesize an entire spkrEmb-marked-up text file into one
+        concatenated wav. Returns immediately with a job id -- a whole file can take
+        several minutes, too long for most HTTP clients to hold a connection open for.
+        Poll GET /api/v1/tts/jobs/{jobId}/ until status is "done", then download from
+        GET /api/v1/tts/jobs/{jobId}/download/.
       security:
         - ApiKeyAuth: []
         - {}
@@ -218,18 +255,18 @@ paths:
                   enum: [a, b]
               required: [text]
       responses:
-        "200":
-          description: The whole file synthesized and concatenated into one wav.
+        "202":
+          description: Job accepted; poll statusUrl for progress.
           content:
-            audio/wav:
+            application/json:
               schema:
-                type: string
-                format: binary
+                $ref: "#/components/schemas/JobAccepted"
         "400":
           description: >
-            Missing file/text, CHARACTER_MAPPING_DIR not configured on the server, an
-            unmapped spkrEmb character name, or malformed spkrEmb markers (see
-            src/infer_file.py's error messages).
+            Missing file/text, invalid variant, or CHARACTER_MAPPING_DIR not configured
+            on the server. (Problems specific to the file's *content* -- an unmapped
+            spkrEmb character name, malformed markers, etc. -- surface later, as an
+            "error" status from the job, not here.)
           content:
             application/json:
               schema:
@@ -242,6 +279,81 @@ paths:
                 $ref: "#/components/schemas/ErrorResponse"
         "500":
           description: Unexpected server error.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /api/v1/tts/jobs/{jobId}/:
+    get:
+      operationId: getJobStatus
+      summary: Poll a synthesize-file job's status
+      security:
+        - ApiKeyAuth: []
+        - {}
+      parameters:
+        - name: jobId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Job status (pending/running/done/error).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/JobStatus"
+        "401":
+          description: Missing/incorrect Authorization header (only if the server has API_KEY set).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Unknown job id (never existed, or the server has since restarted -- jobs are in-memory only).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /api/v1/tts/jobs/{jobId}/download/:
+    get:
+      operationId: downloadJobResult
+      summary: Download a finished synthesize-file job's wav
+      security:
+        - ApiKeyAuth: []
+        - {}
+      parameters:
+        - name: jobId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: The synthesized wav.
+          content:
+            audio/wav:
+              schema:
+                type: string
+                format: binary
+        "401":
+          description: Missing/incorrect Authorization header (only if the server has API_KEY set).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Unknown job id.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: Job exists but isn't done yet (still pending/running) or failed (status "error").
           content:
             application/json:
               schema:
