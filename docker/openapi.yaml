@@ -1,0 +1,248 @@
+openapi: 3.0.3
+info:
+  title: Kangri TTS Webservice
+  description: >
+    SpeechT5-based text-to-speech for Kangri (Devanagari). Wraps src/infer.py and
+    src/infer_file.py -- see docker/README.md for the underlying CLI scripts these mirror.
+  version: "1.0.0"
+servers:
+  - url: http://localhost:8000
+    description: Adjust host/port to match how the container was run (see buildDocker.ps1 -Port).
+
+components:
+  securitySchemes:
+    ApiKeyAuth:
+      type: apiKey
+      in: header
+      name: Authorization
+      description: >
+        Only enforced if the server was started with API_KEY set (buildDocker.ps1 -ApiKey).
+        If not set, this header is ignored entirely.
+  schemas:
+    ErrorResponse:
+      type: object
+      properties:
+        error:
+          type: string
+      required: [error]
+    CharacterInfo:
+      type: object
+      properties:
+        rank:
+          type: integer
+          description: 1 = most training data (generally the most reliable voice).
+        character:
+          type: string
+        trainMinutes:
+          type: number
+          format: float
+        trainUtterances:
+          type: integer
+        valUtterances:
+          type: integer
+      required: [rank, character, trainMinutes, trainUtterances, valUtterances]
+
+paths:
+  /api/v1/tts/health/:
+    get:
+      operationId: getHealth
+      summary: Liveness check
+      security: []
+      responses:
+        "200":
+          description: Server is up.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: ok
+                  loaded_variants:
+                    type: array
+                    items:
+                      type: string
+                    description: Transcription variants ("a"/"b") whose model is currently loaded in memory.
+                required: [status, loaded_variants]
+
+  /api/v1/tts/characters/:
+    get:
+      operationId: getCharacters
+      summary: List characters ranked by likely voice quality
+      security:
+        - ApiKeyAuth: []
+        - {}
+      parameters:
+        - name: variant
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [a, b]
+          description: Which transcription-variant model/dataset to use. Server default if omitted.
+      responses:
+        "200":
+          description: Ranked character list.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  variant:
+                    type: string
+                  characters:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/CharacterInfo"
+                required: [variant, characters]
+        "400":
+          description: Invalid variant, or model/dataset failed to load.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Missing/incorrect Authorization header (only if the server has API_KEY set).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /api/v1/tts/synthesize/:
+    post:
+      operationId: synthesize
+      summary: Synthesize text as one character, all characters, or a validation-set comparison
+      security:
+        - ApiKeyAuth: []
+        - {}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                text:
+                  type: string
+                  description: >
+                    Required unless "compare" is set. When "character" is "all" and "text" is
+                    omitted, a default validation-set sentence is used instead.
+                character:
+                  type: string
+                  default: Jesus
+                  description: >
+                    A character name (see GET /api/v1/tts/characters/), or "all" to synthesize
+                    "text" with every character's voice at once.
+                variant:
+                  type: string
+                  enum: [a, b]
+                  description: Server default if omitted.
+                compare:
+                  type: integer
+                  minimum: 0
+                  default: 0
+                  description: >
+                    If > 0, ignore "text" and instead synthesize N random held-out validation
+                    examples for "character", zipped alongside their real recordings. Requires
+                    the server to have WAV_DIR configured (buildDocker.ps1 -WavDir).
+                seed:
+                  type: integer
+                  default: 0
+                  description: Random seed for picking "compare" examples.
+              required: []
+      responses:
+        "200":
+          description: >
+            A single wav (normal case), or a zip (when "character" is "all", or "compare" > 0).
+            Content-Disposition gives a suggested filename in all cases.
+          content:
+            audio/wav:
+              schema:
+                type: string
+                format: binary
+            application/zip:
+              schema:
+                type: string
+                format: binary
+        "400":
+          description: Missing/invalid parameters, unknown character, or compare requested without WAV_DIR configured.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Missing/incorrect Authorization header (only if the server has API_KEY set).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Unexpected server error.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /api/v1/tts/synthesize-file/:
+    post:
+      operationId: synthesizeFile
+      summary: Synthesize an entire spkrEmb-marked-up text file into one concatenated wav
+      security:
+        - ApiKeyAuth: []
+        - {}
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                file:
+                  type: string
+                  format: binary
+                  description: A spkrEmb-marked-up text file (see src/infer_file.py's docstring for the format).
+                variant:
+                  type: string
+                  enum: [a, b]
+              required: [file]
+          application/json:
+            schema:
+              type: object
+              properties:
+                text:
+                  type: string
+                  description: The full marked-up file content, as a string, instead of a file upload.
+                variant:
+                  type: string
+                  enum: [a, b]
+              required: [text]
+      responses:
+        "200":
+          description: The whole file synthesized and concatenated into one wav.
+          content:
+            audio/wav:
+              schema:
+                type: string
+                format: binary
+        "400":
+          description: >
+            Missing file/text, CHARACTER_MAPPING_DIR not configured on the server, an
+            unmapped spkrEmb character name, or malformed spkrEmb markers (see
+            src/infer_file.py's error messages).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Missing/incorrect Authorization header (only if the server has API_KEY set).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Unexpected server error.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"

@@ -9,5 +9,9 @@ soundfile
 speechbrain==1.0.3  # 1.1.0 added a lazy k2_fsa import in Xvector that crashes on Windows without the k2 package
 sentencepiece
 librosa
-evaluate
 tensorboard
+
+# webservice (docker/)
+flask
+gevent
+flask-swagger-ui

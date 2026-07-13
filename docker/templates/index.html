@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Kangri TTS</title>
+    <style>
+        html { box-sizing: border-box; }
+        *, *:before, *:after { box-sizing: inherit; }
+        body { font-family: sans-serif; max-width: 60em; margin: 2em auto; padding: 0 1em; }
+        textarea { width: 100%; height: 8em; font-size: 1rem; padding: 0.5rem; }
+        select, button, input[type="file"] { font-size: 1rem; padding: 0.3rem; margin: 0.3rem 0.3rem 0.3rem 0; }
+        .row { margin-bottom: 1rem; }
+        .section { border: 1px solid #ccc; border-radius: 6px; padding: 1rem; margin-bottom: 1.5rem; }
+        #endpoints { font-family: monospace; font-size: 0.9rem; }
+        audio { width: 100%; margin-top: 0.5rem; }
+    </style>
+</head>
+<body>
+    <h1>Kangri SpeechT5 TTS</h1>
+
+    <div class="section">
+        <h2>Synthesize text</h2>
+        <div class="row">
+            <textarea id="text" placeholder="Enter Kangri (Devanagari) text..."></textarea>
+        </div>
+        <div class="row">
+            <label>Character: <select id="character"><option value="Jesus">Jesus</option></select></label>
+            <label>Variant: <select id="variant"><option value="b" selected>b</option><option value="a">a</option></select></label>
+            <button id="synthBtn">Synthesize</button>
+        </div>
+        <audio id="player" controls style="display:none"></audio>
+    </div>
+
+    <div class="section">
+        <h2>Synthesize a marked-up file</h2>
+        <div class="row">
+            <input type="file" id="fileInput" accept=".txt" />
+            <label>Variant: <select id="fileVariant"><option value="b" selected>b</option><option value="a">a</option></select></label>
+            <button id="fileBtn">Synthesize File</button>
+        </div>
+        <audio id="filePlayer" controls style="display:none"></audio>
+    </div>
+
+    <h2>API Endpoints</h2>
+    <ul id="endpoints">
+        <li>GET /api/v1/tts/health/</li>
+        <li>GET /api/v1/tts/characters/?variant=a|b</li>
+        <li>POST /api/v1/tts/synthesize/ &mdash; JSON {text, character, variant, compare, seed} &rarr; wav or zip</li>
+        <li>POST /api/v1/tts/synthesize-file/ &mdash; multipart 'file' or JSON {text, variant} &rarr; wav</li>
+    </ul>
+
+    <script>
+      async function loadCharacters() {
+        try {
+          const res = await fetch(`${location.origin}/api/v1/tts/characters/?variant=b`);
+          const data = await res.json();
+          const sel = document.getElementById("character");
+          sel.innerHTML = "";
+          for (const c of data.characters) {
+            const opt = document.createElement("option");
+            opt.value = c.character;
+            opt.textContent = `${c.character} (${c.trainMinutes} min)`;
+            sel.appendChild(opt);
+          }
+        } catch (e) {
+          console.error("Error loading characters:", e);
+        }
+      }
+      loadCharacters();
+
+      document.getElementById("synthBtn").addEventListener("click", async () => {
+        const text = document.getElementById("text").value;
+        if (!text.trim()) { alert("Please enter text"); return; }
+        const body = {
+          text,
+          character: document.getElementById("character").value,
+          variant: document.getElementById("variant").value,
+        };
+        try {
+          const res = await fetch(`${location.origin}/api/v1/tts/synthesize/`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(body),
+          });
+          if (!res.ok) {
+            const err = await res.json();
+            alert("Error: " + (err.error || res.statusText));
+            return;
+          }
+          const blob = await res.blob();
+          const player = document.getElementById("player");
+          player.src = URL.createObjectURL(blob);
+          player.style.display = "block";
+          player.play();
+        } catch (e) {
+          alert("Error: " + e.message);
+        }
+      });
+
+      document.getElementById("fileBtn").addEventListener("click", async () => {
+        const fileInput = document.getElementById("fileInput");
+        if (!fileInput.files.length) { alert("Please choose a file"); return; }
+        const form = new FormData();
+        form.append("file", fileInput.files[0]);
+        form.append("variant", document.getElementById("fileVariant").value);
+        try {
+          const res = await fetch(`${location.origin}/api/v1/tts/synthesize-file/`, {
+            method: "POST",
+            body: form,
+          });
+          if (!res.ok) {
+            const err = await res.json();
+            alert("Error: " + (err.error || res.statusText));
+            return;
+          }
+          const blob = await res.blob();
+          const player = document.getElementById("filePlayer");
+          player.src = URL.createObjectURL(blob);
+          player.style.display = "block";
+          player.play();
+        } catch (e) {
+          alert("Error: " + e.message);
+        }
+      });
+    </script>
+</body>
+</html>
