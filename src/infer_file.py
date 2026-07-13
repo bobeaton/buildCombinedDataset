@@ -42,6 +42,14 @@ SPEAKER_MARKER_PREFIX = "spkrEmb:"
 LAST_SPEAKER_TOKEN = "LastSpeaker"
 TARGET_SR = 16000
 
+# Cap on any silence gap, applied to every clip via cap_silence() in infer.py:
+# - internal gaps (e.g. a comma pause mid-sentence) are capped at the full value here,
+#   since there's no neighboring clip's silence for them to stack with.
+# - each clip's leading/trailing edge is capped at *half* this value, so that when two
+#   clips are concatenated, the worst case at the seam -- trailing(prev) + leading(next)
+#   -- still can't exceed the full budget.
+MAX_INTER_PHRASE_SILENCE_S = 0.40
+
 
 def load_character_mapping(path: Path) -> dict:
     raw = json.loads(path.read_text(encoding="utf-8-sig"))
@@ -123,7 +131,16 @@ def synthesize_file(input_path, character_mapping, character_embeddings, model, 
             )
 
         text = unicodedata.normalize("NFC", line)
-        speech = synthesize(text, character_embeddings[current_character], model, processor, vocoder, device)
+        speech = synthesize(
+            text,
+            character_embeddings[current_character],
+            model,
+            processor,
+            vocoder,
+            device,
+            max_silence_s=MAX_INTER_PHRASE_SILENCE_S,
+            max_boundary_silence_s=MAX_INTER_PHRASE_SILENCE_S / 2,
+        )
         waveforms.append(speech)
         synth_count += 1
         preview = text if len(text) <= 60 else text[:60] + "..."

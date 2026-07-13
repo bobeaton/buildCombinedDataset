@@ -36,6 +36,7 @@ import shutil
 import unicodedata
 from pathlib import Path
 
+import librosa
 import numpy as np
 import soundfile as sf
 import torch
@@ -45,6 +46,7 @@ from transformers import SpeechT5ForTextToSpeech, SpeechT5HifiGan, SpeechT5Proce
 ROOT = Path(__file__).parent.parent
 WAV_DIR = Path(r"C:\Users\pete_\Dropbox\NTprogress\PahariAudio\KangriWordDownloads\FCBH\wavs")
 OUT_DIR = ROOT / "outputs"
+TARGET_SR = 16000
 
 # Where --character all/<none> writes its per-character batches (as <ALL_CHARACTERS_ROOT>/all_characters/).
 # Separate from OUT_DIR since these are meant to be shared/reviewed outside the repo.
@@ -99,14 +101,75 @@ def sanitize_filename(name: str) -> str:
     return re.sub(r"[^\w\-]+", "_", name).strip("_")
 
 
-def synthesize(text, speaker_embedding, model, processor, vocoder, device) -> np.ndarray:
+def cap_silence(
+    waveform: np.ndarray,
+    max_internal_silence_s: float,
+    max_boundary_silence_s: float | None = None,
+    sr: int = TARGET_SR,
+    top_db: float = 30,
+) -> np.ndarray:
+    """Cap every silence run in `waveform` -- leading, trailing, AND internal (e.g. a
+    comma pause mid-sentence) -- down to at most a target duration. Only trims the
+    *excess*; natural gaps shorter than the cap are left untouched.
+
+    Under-trained voices (e.g. "God", ~12 minutes of training data vs. "Jesus"'s ~18.5
+    hours) produce noticeably longer pauses throughout a clip than well-trained ones --
+    confirmed empirically at ~0.4-0.7s between clauses within a single synthesized
+    sentence, vs. a fraction of that for well-trained voices.
+
+    `max_boundary_silence_s` (defaults to `max_internal_silence_s` if not given) applies
+    only to the very first/last silence run. Pass a smaller value there when this clip
+    will be concatenated with neighbors (see src/infer_file.py), so that an adjacent
+    clip's own capped trailing/leading edge can't combine with this one to exceed the
+    target -- an *internal* gap has no such neighbor to stack with, so it's always
+    capped at the full `max_internal_silence_s` regardless.
+    """
+    if max_boundary_silence_s is None:
+        max_boundary_silence_s = max_internal_silence_s
+    if len(waveform) == 0:
+        return waveform
+
+    intervals = librosa.effects.split(waveform, top_db=top_db)
+    if len(intervals) == 0:
+        return waveform
+
+    internal_pad = int(max_internal_silence_s * sr)
+    boundary_pad = int(max_boundary_silence_s * sr)
+
+    pieces = []
+    first_start = intervals[0][0]
+    pieces.append(waveform[first_start - min(first_start, boundary_pad) : intervals[0][1]])
+    for i in range(1, len(intervals)):
+        prev_end = intervals[i - 1][1]
+        cur_start, cur_end = intervals[i]
+        pad = min(cur_start - prev_end, internal_pad)
+        pieces.append(waveform[cur_start - pad : cur_end])
+
+    last_end = intervals[-1][1]
+    trail_pad = min(len(waveform) - last_end, boundary_pad)
+    pieces.append(waveform[last_end : last_end + trail_pad])
+
+    return np.concatenate(pieces)
+
+
+def synthesize(
+    text,
+    speaker_embedding,
+    model,
+    processor,
+    vocoder,
+    device,
+    max_silence_s: float = 0.4,
+    max_boundary_silence_s: float | None = None,
+) -> np.ndarray:
     text = unicodedata.normalize("NFC", text)
     inputs = processor(text=text, return_tensors="pt")
     input_ids = inputs["input_ids"].to(device)
     speaker_tensor = torch.tensor(speaker_embedding, dtype=torch.float32, device=device).unsqueeze(0)
     with torch.no_grad():
         speech = model.generate_speech(input_ids, speaker_tensor, vocoder=vocoder)
-    return speech.cpu().numpy()
+    speech = speech.cpu().numpy()
+    return cap_silence(speech, max_silence_s, max_boundary_silence_s)
 
 
 def main():
