@@ -3,14 +3,13 @@
   Build and run the Kangri TTS webservice Docker container.
 
 .EXAMPLE
-  # Minimal: just the project path (default), GPU, default port 8000
+  # Everything defaults to this machine's usual paths (project, wavs, character mapping)
   .\buildDocker.ps1 -Gpu
 
 .EXAMPLE
-  # Full: enable compare mode and the synthesize-file endpoint too
-  .\buildDocker.ps1 -Gpu `
-    -WavDir "C:\Users\pete_\Dropbox\NTprogress\PahariAudio\KangriWordDownloads\FCBH\wavs" `
-    -CharacterMappingDir "C:\My Paratext 9 Projects\xnr\shared\milestone-markers"
+  # Opt out of a default mount (e.g. skip character-mapping, so synthesize-file returns
+  # its "not configured" error instead of mounting a possibly-stale file)
+  .\buildDocker.ps1 -Gpu -CharacterMappingDir ""
 
 .EXAMPLE
   # Just rebuild the image without starting a container
@@ -22,12 +21,12 @@ param(
     [string]$ProjectPath = "C:\vscode\buildCombinedDataset",
 
     # Host path to the folder of raw reference wavs (FCBH/wavs). Optional -- only needed
-    # for the "compare" option of POST /api/v1/tts/synthesize/.
-    [string]$WavDir = "",
+    # for the "compare" option of POST /api/v1/tts/synthesize/. Pass -WavDir "" to opt out.
+    [string]$WavDir = "C:\Users\pete_\Dropbox\NTprogress\PahariAudio\KangriWordDownloads\FCBH\wavs",
 
     # Host path to the folder containing characterMapping.json. Optional -- only needed
-    # for POST /api/v1/tts/synthesize-file/.
-    [string]$CharacterMappingDir = "",
+    # for POST /api/v1/tts/synthesize-file/. Pass -CharacterMappingDir "" to opt out.
+    [string]$CharacterMappingDir = "C:\My Paratext 9 Projects\xnr\shared\milestone-markers",
 
     [int]$Port = 8000,
     [string]$ApiKey = "",

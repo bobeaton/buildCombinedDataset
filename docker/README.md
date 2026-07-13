@@ -9,16 +9,15 @@ with the CLI.
 ## Usage
 
 ```powershell
-# Build + run with GPU, using the default project path (C:\vscode\buildCombinedDataset)
+# Build + run -- project path, wavs, and character-mapping folder all default to this
+# machine's usual locations (see param() block in buildDocker.ps1 to change them)
 .\buildDocker.ps1 -Gpu
-
-# Enable the optional compare mode and synthesize-file endpoint too
-.\buildDocker.ps1 -Gpu `
-  -WavDir "C:\Users\pete_\Dropbox\NTprogress\PahariAudio\KangriWordDownloads\FCBH\wavs" `
-  -CharacterMappingDir "C:\My Paratext 9 Projects\xnr\shared\milestone-markers"
 
 # CPU-only, custom port
 .\buildDocker.ps1 -Port 8080
+
+# Opt out of a default mount (pass "" to disable it)
+.\buildDocker.ps1 -Gpu -CharacterMappingDir ""
 ```
 
 Then browse to http://localhost:8000/ (or your chosen `-Port`) for a simple test UI, or
@@ -37,7 +36,8 @@ running from the mounted copy -- no path-rewriting needed. This also means editi
 `src/infer.py` on the host and restarting the container picks up the change without
 rebuilding the image.
 
-Two more mounts are **optional**, each only needed for one feature:
+Two more mounts default to this machine's usual paths but are **optional** (pass `""` to
+disable), each only needed for one feature:
 - `-WavDir`: raw reference recordings, needed only for the `compare` option of
   `POST /api/v1/tts/synthesize/`. Without it, that option returns a clear error.
 - `-CharacterMappingDir`: folder containing `characterMapping.json`, needed only for
@@ -89,7 +89,17 @@ text file, see `../src/infer_file.py`'s docstring for the format), or JSON
 `{"text": "<file content>"}`. Optional form/JSON field `variant`. Requires
 `-CharacterMappingDir` to have been mounted.
 
-Returns immediately with **202 Accepted** and `{"jobId": "...", "status": "pending", "statusUrl": "..."}`.
+**Validated up front**, before any job is created: every `spkrEmb:` name must resolve
+(through `characterMapping.json`) to a trained character, and the file must start with a
+marker before any text. If validation fails, you get an immediate
+**400** `{"valid": false, "problems": ["line 12: 'Cain' is not a key in characterMapping.json", ...]}`
+-- every problem in the file, not just the first, so a whole chapter's mapping gaps show
+up in one call. Pass `"dryRun": true` (form field or JSON field) to run only this check
+-- returns `{"valid": true}` on success instead of starting a job. (The CLI has the same
+check via `infer_file.py --check-only`, which also skips loading the model entirely for
+a fast turnaround.)
+
+Otherwise, returns **202 Accepted** and `{"jobId": "...", "status": "pending", "statusUrl": "..."}`.
 The job runs in a background thread; poll:
 
 ### GET /api/v1/tts/jobs/&lt;jobId&gt;/

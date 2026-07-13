@@ -15,9 +15,17 @@ All synthesized lines (regardless of speaker) are concatenated in order into one
 written to OUTPUT_DIR/<input file stem>.wav. Any existing file at that path is renamed
 to a numbered ".bak" first, so previous attempts aren't lost.
 
+Before any synthesis happens, the whole file is validated (validate_file()): every
+spkrEmb name must resolve to a trained character, and the file must start with a marker
+before any text. All problems are collected and reported together (not just the first),
+so a whole chapter's mapping gaps can be seen in one go.
+
 Usage:
   python src/infer_file.py "sampleData\\SpeecheloCleanInLinesNormalized.txt"
   python src/infer_file.py "sampleData\\SpeecheloCleanInLinesNormalized.txt" --variant a
+
+  # validate spkrEmb markers/mappings only -- no synthesis, no model load
+  python src/infer_file.py "sampleData\\SpeecheloCleanInLinesNormalized.txt" --check-only
 """
 
 import argparse
@@ -53,14 +61,20 @@ MAX_INTER_PHRASE_SILENCE_S = 0.40
 
 def load_character_mapping(path: Path) -> dict:
     raw = json.loads(path.read_text(encoding="utf-8-sig"))
-    if isinstance(raw, dict):
-        return raw
+    if isinstance(raw, dict) and "AlphabeticOrder" in raw:
+        # current export format: {"AlphabeticOrder": [...], "InFirstOccurrenceOrder": [...]}.
+        # AlphabeticOrder is the complete flat list; InFirstOccurrenceOrder is the same
+        # mappings regrouped by book/chapter, which we don't need (we key purely on the
+        # SFM character name, not where it first appears).
+        raw = raw["AlphabeticOrder"]
     if isinstance(raw, list):
         # tolerate a JSON array of single-key objects as well as a flat dict
         mapping = {}
         for entry in raw:
             mapping.update(entry)
         return mapping
+    if isinstance(raw, dict):
+        return raw
     raise ValueError(f"unexpected characterMapping.json structure: {type(raw)}")
 
 
@@ -93,7 +107,73 @@ def resolve_character(sfm_name: str, character_mapping: dict, character_embeddin
     return tts_character
 
 
+def validate_file(input_path: Path, character_mapping: dict[str, str], character_embeddings: dict[str, np.ndarray]) -> list[str]:
+    """Check a marked-up file without doing any synthesis: every 'spkrEmb:' name must
+    resolve (through character_mapping) to a trained character, 'LastSpeaker' must never
+    be used before a previous speaker has been recorded, and the file must start with a
+    marker before any text. Returns a list of problem descriptions (empty = all clear).
+
+    Deliberately collects every problem in one pass rather than stopping at the first,
+    so a whole chapter's mapping gaps can be seen -- and fixed -- in one go instead of
+    one failed run at a time.
+    """
+    lines = input_path.read_text(encoding="utf-8-sig").splitlines()
+    problems = []
+
+    current_character = None
+    last_character = None
+    seen_any_marker = False
+
+    for lineno, raw_line in enumerate(lines, start=1):
+        line = raw_line.strip()
+        if not line:
+            continue
+
+        if line.startswith(SPEAKER_MARKER_PREFIX):
+            seen_any_marker = True
+            sfm_name = line[len(SPEAKER_MARKER_PREFIX) :].strip()
+
+            if sfm_name == LAST_SPEAKER_TOKEN:
+                if last_character is None:
+                    problems.append(
+                        f"line {lineno}: '{SPEAKER_MARKER_PREFIX} {LAST_SPEAKER_TOKEN}' used "
+                        "before any previous speaker had been recorded"
+                    )
+                else:
+                    current_character, last_character = last_character, current_character
+                continue
+
+            if sfm_name not in character_mapping:
+                problems.append(f"line {lineno}: {sfm_name!r} is not a key in characterMapping.json")
+                continue  # leave current/last_character as-is; don't cascade this into every line below
+
+            tts_character = character_mapping[sfm_name]
+            if tts_character not in character_embeddings:
+                problems.append(
+                    f"line {lineno}: {sfm_name!r} maps to {tts_character!r}, which isn't a "
+                    "trained character (see GET /api/v1/tts/characters/ or infer.py --list-characters)"
+                )
+                continue
+
+            last_character = current_character
+            current_character = tts_character
+            continue
+
+        # a text line
+        if not seen_any_marker:
+            problems.append(
+                f"line {lineno}: text appears before any '{SPEAKER_MARKER_PREFIX} <name>' marker "
+                "-- the file must start with one"
+            )
+
+    return problems
+
+
 def synthesize_file(input_path, character_mapping, character_embeddings, model, processor, vocoder, device):
+    problems = validate_file(input_path, character_mapping, character_embeddings)
+    if problems:
+        raise ValueError("file failed validation:\n  " + "\n  ".join(problems))
+
     lines = input_path.read_text(encoding="utf-8-sig").splitlines()
 
     current_character = None  # resolved TTS character name currently active
@@ -156,6 +236,11 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("input_file", type=str, help="path to the marked-up text file to inference")
     parser.add_argument("--variant", choices=["a", "b"], default="b", help="which transcription variant's model/dataset to use (default: b)")
+    parser.add_argument(
+        "--check-only",
+        action="store_true",
+        help="validate spkrEmb markers/mappings and exit -- no synthesis, no model load",
+    )
     args = parser.parse_args()
 
     input_path = Path(args.input_file)
@@ -175,6 +260,16 @@ def main():
     dataset = load_from_disk(str(paths["dataset_dir"]))
     assert isinstance(dataset, DatasetDict)
     character_embeddings = build_character_embeddings(dataset)
+
+    if args.check_only:
+        problems = validate_file(input_path, character_mapping, character_embeddings)
+        if problems:
+            print(f"{len(problems)} problem(s) found:")
+            for p in problems:
+                print(f"  {p}")
+            sys.exit(1)
+        print("OK -- no problems found, ready to synthesize.")
+        return
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
     print(f"loading model from {paths['model_dir']} (device={device})...")

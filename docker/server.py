@@ -61,7 +61,7 @@ from datasets import DatasetDict, load_from_disk
 from transformers import SpeechT5ForTextToSpeech, SpeechT5HifiGan, SpeechT5Processor
 
 from infer import build_character_embeddings, rank_characters_by_quality, sanitize_filename, synthesize, variant_paths
-from infer_file import load_character_mapping, synthesize_file
+from infer_file import load_character_mapping, synthesize_file, validate_file
 
 TARGET_SR = 16000
 OPENAPI_SPEC_PATH = Path(__file__).parent / "openapi.yaml"
@@ -302,6 +302,7 @@ def synthesize_file_endpoint():
         return jsonify({"error": f"character mapping file not found: {mapping_path}"}), 400
 
     variant = request.form.get("variant") or request.args.get("variant", DEFAULT_VARIANT)
+    dry_run = str(request.form.get("dryRun", "")).lower() == "true"
 
     # The uploaded content is copied into a job-owned temp dir that outlives this request
     # (unlike tempfile.TemporaryDirectory()'s context manager) -- the background worker
@@ -317,14 +318,40 @@ def synthesize_file_endpoint():
             tmpdir.rmdir()
             return jsonify({"error": "provide either a multipart 'file' upload or JSON {'text': ...}"}), 400
         variant = data.get("variant", variant)
+        dry_run = bool(data.get("dryRun", dry_run))
         stem = "input"
         input_path = tmpdir / "input.txt"
         input_path.write_text(data["text"], encoding="utf-8")
 
+    def _cleanup_tmp():
+        try:
+            input_path.unlink(missing_ok=True)
+            tmpdir.rmdir()
+        except OSError:
+            pass
+
     if variant not in ("a", "b"):
-        input_path.unlink(missing_ok=True)
-        tmpdir.rmdir()
+        _cleanup_tmp()
         return jsonify({"error": f"invalid variant {variant!r}, must be 'a' or 'b'"}), 400
+
+    try:
+        bundle = get_bundle(variant)
+    except (ValueError, FileNotFoundError) as e:
+        _cleanup_tmp()
+        return jsonify({"error": str(e)}), 400
+
+    # Validated up front -- both so obvious problems (an unmapped spkrEmb name, text
+    # before the first marker) surface immediately instead of after however long the
+    # job runs before hitting them, and so a client can pass dryRun to check a file
+    # without committing to an actual synthesis job at all.
+    character_mapping = load_character_mapping(mapping_path)
+    problems = validate_file(input_path, character_mapping, bundle["character_embeddings"])
+    if problems:
+        _cleanup_tmp()
+        return jsonify({"valid": False, "problems": problems}), 400
+    if dry_run:
+        _cleanup_tmp()
+        return jsonify({"valid": True})
 
     job_id = str(uuid.uuid4())
     with _jobs_lock:

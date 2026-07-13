@@ -41,6 +41,21 @@ components:
         valUtterances:
           type: integer
       required: [rank, character, trainMinutes, trainUtterances, valUtterances]
+    ValidationResult:
+      type: object
+      properties:
+        valid:
+          type: boolean
+          enum: [false]
+        problems:
+          type: array
+          items:
+            type: string
+          description: >
+            One entry per problem found, e.g. "line 12: 'Cain' is not a key in
+            characterMapping.json". Every problem in the file is collected and returned
+            together, not just the first.
+      required: [valid, problems]
     JobAccepted:
       type: object
       properties:
@@ -242,6 +257,13 @@ paths:
                 variant:
                   type: string
                   enum: [a, b]
+                dryRun:
+                  type: boolean
+                  default: false
+                  description: >
+                    If true, only run validation (every spkrEmb name resolves to a
+                    trained character, file starts with a marker) and return the result
+                    -- no job is started, even if validation passes.
               required: [file]
           application/json:
             schema:
@@ -253,8 +275,23 @@ paths:
                 variant:
                   type: string
                   enum: [a, b]
+                dryRun:
+                  type: boolean
+                  default: false
+                  description: Same as the multipart field above.
               required: [text]
       responses:
+        "200":
+          description: Only returned when dryRun is true and validation passed.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  valid:
+                    type: boolean
+                    enum: [true]
+                required: [valid]
         "202":
           description: Job accepted; poll statusUrl for progress.
           content:
@@ -263,14 +300,17 @@ paths:
                 $ref: "#/components/schemas/JobAccepted"
         "400":
           description: >
-            Missing file/text, invalid variant, or CHARACTER_MAPPING_DIR not configured
-            on the server. (Problems specific to the file's *content* -- an unmapped
-            spkrEmb character name, malformed markers, etc. -- surface later, as an
-            "error" status from the job, not here.)
+            Either a request-level problem (missing file/text, invalid variant,
+            CHARACTER_MAPPING_DIR not configured on the server) as an ErrorResponse, or a
+            *content* validation failure (an unmapped spkrEmb character name, text before
+            the first marker, etc. -- checked up front, before any job is created) as a
+            ValidationResult with valid=false.
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/ErrorResponse"
+                oneOf:
+                  - $ref: "#/components/schemas/ErrorResponse"
+                  - $ref: "#/components/schemas/ValidationResult"
         "401":
           description: Missing/incorrect Authorization header (only if the server has API_KEY set).
           content:
