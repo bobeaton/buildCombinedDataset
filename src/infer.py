@@ -152,6 +152,50 @@ def cap_silence(
     return np.concatenate(pieces)
 
 
+def detect_alignment_issue(
+    waveform: np.ndarray, sr: int = TARGET_SR, top_db: float = 30, suspicious_gap_s: float = 1.0
+) -> str | None:
+    """Flag a probable SpeechT5 encoder-decoder attention-alignment failure: a silence
+    gap (leading, trailing, or between words/clauses) longer than `suspicious_gap_s`.
+
+    Confirmed empirically (see project history) that this correlates with the model
+    actually failing to voice part of the text -- not just an unusually slow/quiet
+    delivery -- for a specific text+speaker-embedding combination. Retrying generation
+    does not reliably fix it (tested 10 retries on a known-bad case, all still bad,
+    1.15s-6.24s); the practical mitigation is to catch it here for manual review, since
+    it isn't preventable through code alone.
+
+    Must be called on the *raw*, uncapped waveform -- cap_silence() trims exactly the
+    gaps this function is trying to measure, so checking post-cap audio would never
+    detect anything.
+
+    Returns a human-readable description, or None if nothing suspicious was found.
+    """
+    if len(waveform) == 0:
+        return "entire clip is silence"
+    intervals = librosa.effects.split(waveform, top_db=top_db)
+    if len(intervals) == 0:
+        return "entire clip is silence"
+
+    lead = intervals[0][0] / sr
+    if lead > suspicious_gap_s:
+        return f"leading silence of {lead:.2f}s (> {suspicious_gap_s}s) -- the model may have skipped part of the text"
+
+    trail = (len(waveform) - intervals[-1][1]) / sr
+    if trail > suspicious_gap_s:
+        return f"trailing silence of {trail:.2f}s (> {suspicious_gap_s}s) -- generation may have run on past the end of the text"
+
+    for i in range(len(intervals) - 1):
+        gap = (intervals[i + 1][0] - intervals[i][1]) / sr
+        if gap > suspicious_gap_s:
+            return (
+                f"internal silence gap of {gap:.2f}s (> {suspicious_gap_s}s) around "
+                f"{intervals[i][1] / sr:.1f}s -- the model may have skipped part of the text"
+            )
+
+    return None
+
+
 def synthesize(
     text,
     speaker_embedding,
@@ -161,7 +205,7 @@ def synthesize(
     device,
     max_silence_s: float = 0.4,
     max_boundary_silence_s: float | None = None,
-) -> np.ndarray:
+) -> tuple[np.ndarray, str | None]:
     text = unicodedata.normalize("NFC", text)
     inputs = processor(text=text, return_tensors="pt")
     input_ids = inputs["input_ids"].to(device)
@@ -169,7 +213,8 @@ def synthesize(
     with torch.no_grad():
         speech = model.generate_speech(input_ids, speaker_tensor, vocoder=vocoder)
     speech = speech.cpu().numpy()
-    return cap_silence(speech, max_silence_s, max_boundary_silence_s)
+    warning = detect_alignment_issue(speech)  # check the RAW clip -- capping would hide the gap
+    return cap_silence(speech, max_silence_s, max_boundary_silence_s), warning
 
 
 def main():
@@ -259,11 +304,13 @@ def main():
 
         print(f"synthesizing for all {len(ranked)} characters (prefix={prefix}): {text!r}")
         for i, char_name in enumerate(ranked, start=1):
-            speech = synthesize(text, character_embeddings[char_name], model, processor, vocoder, device)
+            speech, warning = synthesize(text, character_embeddings[char_name], model, processor, vocoder, device)
             fname = f"{i:02d}_{sanitize_filename(char_name)}.wav"
             out_path = batch_dir / fname
             sf.write(str(out_path), speech, 16000)
             print(f"[{i}/{len(ranked)}] {char_name} -> {out_path}")
+            if warning:
+                print(f"    WARNING: {warning}")
 
         manifest.append({"text": text, "prefix": prefix})
         manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -280,7 +327,7 @@ def main():
         for i, idx in enumerate(idxs):
             ex = val[int(idx)]
             text = ex["text"]
-            speech = synthesize(text, character_embeddings[character], model, processor, vocoder, device)
+            speech, warning = synthesize(text, character_embeddings[character], model, processor, vocoder, device)
 
             synth_path = OUT_DIR / f"compare_{i}_synth{suffix}.wav"
             ref_path = OUT_DIR / f"compare_{i}_reference{suffix}.wav"
@@ -293,6 +340,8 @@ def main():
             print(f"[{i}] text: {text}")
             print(f"    synth:     {synth_path}")
             print(f"    reference: {ref_path}")
+            if warning:
+                print(f"    WARNING: {warning}")
         return
 
     # Default listening-test sentences: pulled from this variant's own validation text
@@ -305,11 +354,13 @@ def main():
         texts = [ex["text"] for ex in dataset["test"].select(range(2))]
 
     for i, text in enumerate(texts):
-        speech = synthesize(text, character_embeddings[character], model, processor, vocoder, device)
+        speech, warning = synthesize(text, character_embeddings[character], model, processor, vocoder, device)
         out_path = OUT_DIR / f"sample_{i}{suffix}.wav"
         sf.write(str(out_path), speech, 16000)
         print(f"[{i}] text: {text}")
         print(f"    wrote: {out_path}")
+        if warning:
+            print(f"    WARNING: {warning}")
 
 
 if __name__ == "__main__":

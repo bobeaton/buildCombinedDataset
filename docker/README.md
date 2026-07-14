@@ -107,8 +107,17 @@ The job runs in a background thread; poll:
 {"jobId": "...", "status": "running"}
 ```
 `status` is one of `pending`, `running`, `done`, `error` (with an `error` message field),
-or `done` (with `synthCount` and a `downloadUrl` field). A reasonable poll interval is
-~30s -- there's no push/webhook notification, only polling.
+or `done` (with `synthCount`, a `downloadUrl` field, and a `warnings` array). A reasonable
+poll interval is ~30s -- there's no push/webhook notification, only polling.
+
+**`warnings`** (non-fatal -- the job still completes and produces audio): one entry per
+line where the model probably failed to voice part of the text, each with `line`,
+`character`, `text`, and a `warning` description. Detected via an anomalously long
+silence gap (leading, trailing, or between words) in the raw generated clip, confirmed
+empirically to correlate with the model actually skipping content for a specific
+text+voice combination -- not preventable by retrying (tested 10x on a known case, all
+still bad) or by capping silence after the fact (that only hides the gap, it doesn't
+restore the missing words). Review and manually reword/re-run flagged lines.
 
 ### GET /api/v1/tts/jobs/&lt;jobId&gt;/download/
 Returns `audio/wav` once the job's `status` is `done`. `409` if it's not ready yet, `404`

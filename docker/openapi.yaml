@@ -87,6 +87,26 @@ components:
         downloadUrl:
           type: string
           description: Present only when status is "done".
+        warnings:
+          type: array
+          description: >
+            Present only when status is "done". One entry per line where the model
+            probably failed to voice part of the text (detected via an anomalously long
+            silence gap -- confirmed empirically to correlate with skipped/lost words,
+            not just a slow delivery). Empty array if none. The job still completes and
+            these are non-fatal -- review and manually reword/re-run the flagged lines.
+          items:
+            type: object
+            properties:
+              line:
+                type: integer
+              character:
+                type: string
+              text:
+                type: string
+              warning:
+                type: string
+            required: [line, character, text, warning]
       required: [jobId, status]
 
 paths:

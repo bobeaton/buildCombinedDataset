@@ -99,7 +99,7 @@ def _run_synthesize_file_job(job_id: str, input_path: Path, variant: str, mappin
     try:
         bundle = get_bundle(variant)
         character_mapping = load_character_mapping(mapping_path)
-        full_audio, synth_count = synthesize_file(
+        full_audio, synth_count, warnings = synthesize_file(
             input_path,
             character_mapping,
             bundle["character_embeddings"],
@@ -110,8 +110,8 @@ def _run_synthesize_file_job(job_id: str, input_path: Path, variant: str, mappin
         )
         audio_bytes = _wav_bytes(full_audio)
         with _jobs_lock:
-            _jobs[job_id].update(status="done", audio_bytes=audio_bytes, synth_count=synth_count)
-        print(f"[job {job_id}] synthesized {synth_count} lines from {input_path.name}")
+            _jobs[job_id].update(status="done", audio_bytes=audio_bytes, synth_count=synth_count, warnings=warnings)
+        print(f"[job {job_id}] synthesized {synth_count} lines from {input_path.name} ({len(warnings)} warning(s))")
     except Exception as e:
         with _jobs_lock:
             _jobs[job_id].update(status="error", error=str(e))
@@ -260,10 +260,11 @@ def synthesize_endpoint():
             for i, idx in enumerate(idxs):
                 ex = val[int(idx)]
                 line_text = ex["text"]
-                speech = synthesize(line_text, character_embeddings[character], model, processor, vocoder, device)
+                speech, warning = synthesize(line_text, character_embeddings[character], model, processor, vocoder, device)
                 zf.writestr(f"compare_{i}_synth.wav", _wav_bytes(speech))
                 zf.writestr(f"compare_{i}_reference.wav", (wav_dir / ex["audio_file"]).read_bytes())
-                zf.writestr(f"compare_{i}_text.txt", line_text.encode("utf-8"))
+                text_content = line_text if not warning else f"{line_text}\n\nWARNING: {warning}"
+                zf.writestr(f"compare_{i}_text.txt", text_content.encode("utf-8"))
         buf.seek(0)
         return send_file(buf, mimetype="application/zip", as_attachment=True, download_name=f"compare_{character}.zip")
 
@@ -273,11 +274,12 @@ def synthesize_endpoint():
 
         buf = io.BytesIO()
         with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
-            manifest = [{"text": text_to_use, "rank": i, "character": name} for i, name in enumerate(ranked, start=1)]
+            manifest = []
             for i, char_name in enumerate(ranked, start=1):
-                speech = synthesize(text_to_use, character_embeddings[char_name], model, processor, vocoder, device)
+                speech, warning = synthesize(text_to_use, character_embeddings[char_name], model, processor, vocoder, device)
                 fname = f"{i:02d}_{sanitize_filename(char_name)}.wav"
                 zf.writestr(fname, _wav_bytes(speech))
+                manifest.append({"text": text_to_use, "rank": i, "character": char_name, "warning": warning})
             zf.writestr("manifest.json", json.dumps(manifest, ensure_ascii=False, indent=2))
         buf.seek(0)
         return send_file(buf, mimetype="application/zip", as_attachment=True, download_name="all_characters.zip")
@@ -285,9 +287,12 @@ def synthesize_endpoint():
     if not text:
         return jsonify({"error": "'text' is required (unless 'compare' or character 'all' is used)"}), 400
 
-    speech = synthesize(text, character_embeddings[character], model, processor, vocoder, device)
+    speech, warning = synthesize(text, character_embeddings[character], model, processor, vocoder, device)
     buf = io.BytesIO(_wav_bytes(speech))
-    return send_file(buf, mimetype="audio/wav", as_attachment=True, download_name="synthesized.wav")
+    response = send_file(buf, mimetype="audio/wav", as_attachment=True, download_name="synthesized.wav")
+    if warning:
+        response.headers["X-Synthesis-Warning"] = warning
+    return response
 
 
 @app.route("/api/v1/tts/synthesize-file/", methods=["POST"])
@@ -378,6 +383,7 @@ def job_status_endpoint(job_id):
     elif job["status"] == "done":
         response["synthCount"] = job["synth_count"]
         response["downloadUrl"] = f"/api/v1/tts/jobs/{job_id}/download/"
+        response["warnings"] = job["warnings"]
     return jsonify(response)
 
 

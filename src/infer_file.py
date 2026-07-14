@@ -195,6 +195,7 @@ def synthesize_file(input_path, character_mapping, character_embeddings, model, 
 
     waveforms = []
     synth_count = 0
+    warnings = []  # list of {"line": int, "character": str, "text": str, "warning": str}
     for lineno, raw_line in enumerate(lines, start=1):
         line = raw_line.strip()
         if not line:
@@ -211,7 +212,7 @@ def synthesize_file(input_path, character_mapping, character_embeddings, model, 
             )
 
         text = unicodedata.normalize("NFC", line)
-        speech = synthesize(
+        speech, warning = synthesize(
             text,
             character_embeddings[current_character],
             model,
@@ -225,11 +226,14 @@ def synthesize_file(input_path, character_mapping, character_embeddings, model, 
         synth_count += 1
         preview = text if len(text) <= 60 else text[:60] + "..."
         print(f"[{synth_count}] ({current_character}) {preview}")
+        if warning:
+            print(f"    WARNING (line {lineno}): {warning}")
+            warnings.append({"line": lineno, "character": current_character, "text": text, "warning": warning})
 
     if not waveforms:
         raise ValueError("no text lines found to synthesize")
 
-    return np.concatenate(waveforms), synth_count
+    return np.concatenate(waveforms), synth_count, warnings
 
 
 def main():
@@ -279,7 +283,7 @@ def main():
     vocoder = SpeechT5HifiGan.from_pretrained("microsoft/speecht5_hifigan").to(device)
 
     try:
-        full_audio, synth_count = synthesize_file(
+        full_audio, synth_count, warnings = synthesize_file(
             input_path, character_mapping, character_embeddings, model, processor, vocoder, device
         )
     except ValueError as e:
@@ -291,6 +295,12 @@ def main():
     backup_existing_file(out_path)
     sf.write(str(out_path), full_audio, TARGET_SR)
     print(f"synthesized {synth_count} lines ({len(full_audio) / TARGET_SR:.1f}s) -> {out_path}")
+    if warnings:
+        print(f"\n{len(warnings)} line(s) flagged for review (possible skipped/lost words):")
+        for w in warnings:
+            preview = w["text"] if len(w["text"]) <= 60 else w["text"][:60] + "..."
+            print(f"  line {w['line']} ({w['character']}): {w['warning']}")
+            print(f"    {preview}")
 
 
 if __name__ == "__main__":
