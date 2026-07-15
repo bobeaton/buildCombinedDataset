@@ -303,6 +303,7 @@ def main():
         batch_dir.mkdir(exist_ok=True)
 
         print(f"synthesizing for all {len(ranked)} characters (prefix={prefix}): {text!r}")
+        per_character_warnings = {}
         for i, char_name in enumerate(ranked, start=1):
             speech, warning = synthesize(text, character_embeddings[char_name], model, processor, vocoder, device)
             fname = f"{i:02d}_{sanitize_filename(char_name)}.wav"
@@ -311,11 +312,14 @@ def main():
             print(f"[{i}/{len(ranked)}] {char_name} -> {out_path}")
             if warning:
                 print(f"    WARNING: {warning}")
+                per_character_warnings[char_name] = warning
 
-        manifest.append({"text": text, "prefix": prefix})
+        manifest.append({"text": text, "prefix": prefix, "warnings": per_character_warnings})
         manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
         print(f"wrote {len(ranked)} samples -> {all_dir}")
         print(f"updated manifest -> {manifest_path}")
+        if per_character_warnings:
+            print(f"{len(per_character_warnings)} character(s) flagged (possible skipped/lost words): {', '.join(per_character_warnings)}")
         return
 
     if args.compare:

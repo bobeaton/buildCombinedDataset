@@ -26,7 +26,7 @@ param(
 
     # Host path to the folder containing characterMapping.json. Optional -- only needed
     # for POST /api/v1/tts/synthesize-file/. Pass -CharacterMappingDir "" to opt out.
-    [string]$CharacterMappingDir = "C:\My Paratext 9 Projects\xnr\shared\milestone-markers",
+    [string]$CharacterMappingDir = "C:\Users\pete_\Dropbox\NTprogress\PahariAudio\KangriWordDownloads\FCBH",
 
     [int]$Port = 8000,
     [string]$ApiKey = "",

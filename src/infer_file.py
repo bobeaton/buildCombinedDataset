@@ -43,7 +43,7 @@ from transformers import SpeechT5ForTextToSpeech, SpeechT5HifiGan, SpeechT5Proce
 sys.path.insert(0, str(Path(__file__).parent))
 from infer import build_character_embeddings, synthesize, variant_paths
 
-CHARACTER_MAPPING_PATH = Path(r"C:\My Paratext 9 Projects\xnr\shared\milestone-markers\characterMapping.json")
+CHARACTER_MAPPING_PATH = Path(r"C:\Users\pete_\Dropbox\NTprogress\PahariAudio\KangriWordDownloads\FCBH\characterMapping.json")
 OUTPUT_DIR = Path(r"C:\Users\pete_\Dropbox\NTprogress\PahariAudio\KangriWordDownloads")
 
 SPEAKER_MARKER_PREFIX = "spkrEmb:"
