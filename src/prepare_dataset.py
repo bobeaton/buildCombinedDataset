@@ -28,7 +28,7 @@ from datasets import Dataset
 # speechbrain 1.0.x still probes for it at import time (informational only). Shim it
 # BEFORE importing anything from speechbrain, since it runs at speechbrain's import time.
 if not hasattr(torchaudio, "list_audio_backends"):
-    torchaudio.list_audio_backends = lambda: ["soundfile"]
+    torchaudio.list_audio_backends = lambda: ["soundfile"]  # pyright: ignore[reportAttributeAccessIssue]  # intentional shim for a removed API
 
 import speechbrain.utils.fetching as _sb_fetching
 
@@ -143,7 +143,7 @@ def main():
 
     def create_speaker_embedding(waveform):
         with torch.no_grad():
-            emb = speaker_model.encode_batch(torch.tensor(waveform, device=device).unsqueeze(0))
+            emb = speaker_model.encode_batch(torch.tensor(waveform, device=device).unsqueeze(0))  # pyright: ignore[reportOptionalMemberAccess]  # loaded above, non-None at call time
             emb = torch.nn.functional.normalize(emb, dim=2)
         return emb.squeeze().cpu().numpy()
 
@@ -155,9 +155,11 @@ def main():
             sampling_rate=TARGET_SR,
             return_attention_mask=False,
         )
-        out["labels"] = out["labels"][0]
-        out["speaker_embeddings"] = create_speaker_embedding(waveform)
-        out["duration"] = len(waveform) / TARGET_SR
+        # processor(...) returns a BatchFeature that the stubs type as Optional; it's
+        # always populated here, so the subscript-on-None warnings are false positives.
+        out["labels"] = out["labels"][0]  # pyright: ignore[reportOptionalSubscript]
+        out["speaker_embeddings"] = create_speaker_embedding(waveform)  # pyright: ignore[reportOptionalSubscript]
+        out["duration"] = len(waveform) / TARGET_SR  # pyright: ignore[reportOptionalSubscript]
         return out
 
     print(f"building raw dataset (metadata + audio decode/resample plan, variant={args.variant})...")

@@ -147,9 +147,11 @@ def get_bundle(variant: str) -> dict:
     device = "cuda" if torch.cuda.is_available() else "cpu"
     print(f"[variant={variant}] loading model from {paths['model_dir']} (device={device})...")
     processor = SpeechT5Processor.from_pretrained(str(paths["model_dir"]))
-    model = SpeechT5ForTextToSpeech.from_pretrained(str(paths["model_dir"])).to(device)
+    # transformers' from_pretrained().to(device) is a type-checker false positive (its
+    # stubs mis-resolve .to()); the call is correct at runtime.
+    model = SpeechT5ForTextToSpeech.from_pretrained(str(paths["model_dir"])).to(device)  # pyright: ignore[reportArgumentType]
     model.eval()
-    vocoder = SpeechT5HifiGan.from_pretrained("microsoft/speecht5_hifigan").to(device)
+    vocoder = SpeechT5HifiGan.from_pretrained("microsoft/speecht5_hifigan").to(device)  # pyright: ignore[reportArgumentType]
 
     bundle = {
         "dataset": dataset,

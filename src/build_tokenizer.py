@@ -50,7 +50,7 @@ def main():
     corpus_txt.write_text("\n".join(texts), encoding="utf-8")
 
     vocab_size = len(distinct_chars) + 4  # + bos/pad/eos/unk
-    spm.SentencePieceTrainer.train(
+    spm.SentencePieceTrainer.train(  # pyright: ignore[reportAttributeAccessIssue]  # sentencepiece ships no type stubs
         input=str(corpus_txt),
         model_prefix=model_prefix,
         vocab_size=vocab_size,
@@ -76,7 +76,7 @@ def main():
     sample = texts[0]
     ids = tokenizer(sample).input_ids
     unk_count = sum(1 for i in ids if i == tokenizer.unk_token_id)
-    decoded = tokenizer.decode(ids, skip_special_tokens=True).replace(" ", "")
+    decoded = tokenizer.decode(ids, skip_special_tokens=True).replace(" ", "")  # pyright: ignore[reportAttributeAccessIssue]
     original_nospace = sample.replace(" ", "")
     print(f"sample: {sample!r}")
     print(f"unk count in sample: {unk_count}")

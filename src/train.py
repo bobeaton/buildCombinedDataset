@@ -113,8 +113,10 @@ def build_trainer(max_steps: int, output_dir: Path, tokenizer_dir: Path, model_i
     trainer = Seq2SeqTrainer(
         args=training_args,
         model=model,
-        train_dataset=dataset["train"],
-        eval_dataset=dataset["test"],
+        # HF datasets.Dataset is accepted by Seq2SeqTrainer at runtime; the type checker
+        # only knows the torch Dataset base type, hence the false positive.
+        train_dataset=dataset["train"],  # pyright: ignore[reportArgumentType]
+        eval_dataset=dataset["test"],  # pyright: ignore[reportArgumentType]
         data_collator=data_collator,
         processing_class=processor,
     )

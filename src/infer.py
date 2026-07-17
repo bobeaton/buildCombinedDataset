@@ -40,7 +40,7 @@ import librosa
 import numpy as np
 import soundfile as sf
 import torch
-from datasets import Dataset, DatasetDict, load_from_disk
+from datasets import DatasetDict, load_from_disk
 from transformers import SpeechT5ForTextToSpeech, SpeechT5HifiGan, SpeechT5Processor
 
 ROOT = Path(__file__).parent.parent
@@ -277,9 +277,11 @@ def main():
     device = "cuda" if torch.cuda.is_available() else "cpu"
     print(f"loading model from {model_dir} (device={device})...")
     processor = SpeechT5Processor.from_pretrained(str(model_dir))
-    model = SpeechT5ForTextToSpeech.from_pretrained(str(model_dir)).to(device)
+    # transformers' from_pretrained().to(device) is a type-checker false positive (its
+    # stubs mis-resolve .to()); the call is correct at runtime.
+    model = SpeechT5ForTextToSpeech.from_pretrained(str(model_dir)).to(device)  # pyright: ignore[reportArgumentType]
     model.eval()
-    vocoder = SpeechT5HifiGan.from_pretrained("microsoft/speecht5_hifigan").to(device)
+    vocoder = SpeechT5HifiGan.from_pretrained("microsoft/speecht5_hifigan").to(device)  # pyright: ignore[reportArgumentType]
 
     OUT_DIR.mkdir(exist_ok=True)
 
@@ -355,7 +357,9 @@ def main():
     if args.text:
         texts = [args.text]
     else:
-        texts = [ex["text"] for ex in dataset["test"].select(range(2))]
+        # datasets' stubs don't carry the row element type, so ex["text"] trips the
+        # type checker though it's correct at runtime.
+        texts = [ex["text"] for ex in dataset["test"].select(range(2))]  # pyright: ignore[reportCallIssue, reportArgumentType]
 
     for i, text in enumerate(texts):
         speech, warning = synthesize(text, character_embeddings[character], model, processor, vocoder, device)
