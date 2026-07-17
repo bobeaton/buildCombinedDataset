@@ -13,3 +13,4 @@ data/audio/*
 *.pt
 *.ckpt
 .ipynb_checkpoints/
+.claude/scheduled_tasks.lock
