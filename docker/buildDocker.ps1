@@ -34,7 +34,14 @@ param(
     [string]$DefaultVariant = "b",
     [switch]$Gpu,
     [switch]$Detached,
-    [switch]$BuildOnly
+    [switch]$BuildOnly,
+    # Container name -- fixed so it shows up predictably in Docker Desktop and can be
+    # stopped/started/restarted there instead of re-running this script.
+    [string]$ContainerName = "kangri-tts",
+    # Opt back into throwaway behavior: the container is auto-removed (`--rm`) when it
+    # stops. WITHOUT this (the default), the container persists after stopping so you can
+    # restart it from Docker Desktop; a repeat run of this script replaces it in place.
+    [switch]$Ephemeral
 )
 
 $ErrorActionPreference = "Stop"
@@ -54,7 +61,19 @@ if ($BuildOnly) {
     exit 0
 }
 
-$dockerArgs = @("run", "--rm")
+# A persistent container can't share its name with a leftover one, so clear any
+# existing container of this name first (running or stopped). This makes a repeat run
+# of the script a clean "replace", while a plain `docker start $ContainerName` (or the
+# Docker Desktop restart button) reuses the existing one without touching this script.
+$existing = docker ps -aq --filter "name=^/$ContainerName$"
+if ($existing) {
+    Write-Host "Removing existing container '$ContainerName' ($existing)..."
+    docker rm -f $ContainerName | Out-Null
+}
+
+$dockerArgs = @("run")
+if ($Ephemeral) { $dockerArgs += "--rm" }
+$dockerArgs += @("--name", $ContainerName)
 if ($Detached) { $dockerArgs += "-d" } else { $dockerArgs += "-it" }
 $dockerArgs += @("-p", "${Port}:8000")
 $dockerArgs += @("-e", "PORT=8000")
@@ -80,7 +99,18 @@ $dockerArgs += $ImageName
 Write-Host "Running: docker $($dockerArgs -join ' ')"
 docker @dockerArgs
 
-if (-not $Detached) {
-    Write-Host "`nTo view the web UI, in another PowerShell window run:"
+if ($Detached) {
+    if (-not $Ephemeral) {
+        Write-Host "`nContainer '$ContainerName' is running detached and will persist when stopped."
+        Write-Host "Restart it later from Docker Desktop, or:  docker start $ContainerName"
+        Write-Host "Stop (without removing) with:            docker stop $ContainerName"
+    }
+    Write-Host "Web UI: http://localhost:$Port/"
+} else {
+    Write-Host "`nRunning in the foreground (Ctrl-C to stop)."
+    if (-not $Ephemeral) {
+        Write-Host "The stopped container will remain in Docker Desktop for restart as '$ContainerName'."
+    }
+    Write-Host "To view the web UI, in another PowerShell window run:"
     Write-Host "  Start-Process http://localhost:$Port/"
 }
